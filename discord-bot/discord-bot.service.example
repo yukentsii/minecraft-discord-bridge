@@ -1,0 +1,19 @@
+[Unit]
+Description=Minecraft & Discord Bridge Bot
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=your_linux_user
+Group=your_linux_group
+WorkingDirectory=/path/to/discord-bot
+ExecStart=/path/to/discord-bot/venv/bin/python3 /path/to/discord-bot/main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+EnvironmentFile=-/path/to/discord-bot/.env
+
+[Install]
+WantedBy=multi-user.target

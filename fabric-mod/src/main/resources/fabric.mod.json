@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "discord-whitelist",
+	"version": "${version}",
+	"name": "Discord Whitelist & Console Bridge",
+	"description": "Fabric server mod providing internal HTTP API for real-time whitelist synchronization and bidirectional console log streaming to Discord.",
+	"authors": [
+		"yukentsii"
+	],
+	"contact": {
+		"sources": "https://github.com/yukentsii/minecraft-discord-bridge"
+	},
+	"license": "MIT",
+	"icon": "assets/template-mod/icon.png",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"com.example.TemplateMod"
+		]
+	},
+	"mixins": [
+		"template-mod.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
