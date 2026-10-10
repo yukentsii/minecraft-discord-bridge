@@ -2,7 +2,6 @@
 Minecraft & Discord Server Integration Bot
 - Mojang API Account Verification & Interactive Whitelist System
 - Bidirectional Live Console Bridge (#console)
-- "Join to Create" Dynamic Temporary Voice Channels
 """
 
 import os
@@ -13,7 +12,7 @@ import logging
 import asyncio
 import urllib.request
 import urllib.error
-from typing import Set, List, Tuple
+from typing import Tuple
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -36,24 +35,6 @@ if not TOKEN or TOKEN == "your_discord_bot_token_here":
     logger.error("DISCORD_BOT_TOKEN is not set in environment or .env file!")
     sys.exit(1)
 
-# Voice Channel Trigger Configuration
-raw_trigger_ids = os.getenv("TRIGGER_CHANNEL_ID", "")
-TRIGGER_CHANNEL_IDS: Set[int] = set()
-if raw_trigger_ids:
-    for item in raw_trigger_ids.split(","):
-        item = item.strip()
-        if item.isdigit() and int(item) > 0:
-            TRIGGER_CHANNEL_IDS.add(int(item))
-
-raw_trigger_names = os.getenv(
-    "TRIGGER_CHANNEL_NAMES",
-    "Create Channel,Join to Create,+ New Channel,➕ Create Channel,➕ Join to Create,Oda Oluştur,➕ Oda Oluştur"
-)
-TRIGGER_CHANNEL_NAMES: List[str] = [name.strip().lower() for name in raw_trigger_names.split(",") if name.strip()]
-
-CHANNEL_NAME_TEMPLATE = os.getenv("CHANNEL_NAME_TEMPLATE", "{username}'s Channel")
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_channels.json")
-
 # Whitelist & Console Configuration
 WHITELIST_REVIEW_CHANNEL_ID = int(os.getenv("WHITELIST_REVIEW_CHANNEL_ID", "0"))
 CONSOLE_CHANNEL_ID = int(os.getenv("CONSOLE_CHANNEL_ID", "0"))
@@ -63,41 +44,12 @@ MC_WHITELIST_PATH = os.getenv("MC_WHITELIST_PATH", "whitelist.json")
 MC_MOD_API_URL = os.getenv("MC_MOD_API_URL", "http://127.0.0.1:25585")
 SERVER_NAME = os.getenv("SERVER_NAME", "Minecraft Server")
 
-# State Management
-temp_channels: Set[int] = set()
-user_locks: dict[int, asyncio.Lock] = {}
-state_lock = asyncio.Lock()
+# Locks
 whitelist_file_lock = asyncio.Lock()
-
-
-def load_temp_channels() -> Set[int]:
-    """Load tracked temporary channel IDs from persistent JSON storage."""
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return set(int(x) for x in data)
-        except Exception as e:
-            logger.warning(f"Failed to load {DATA_FILE}: {e}")
-    return set()
-
-
-def save_temp_channels():
-    """Save tracked temporary channel IDs to persistent JSON storage."""
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(temp_channels), f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to save {DATA_FILE}: {e}")
-
-
-temp_channels = load_temp_channels()
 
 # Bot Setup with required intents
 intents = discord.Intents.default()
 intents.guilds = True
-intents.voice_states = True
 intents.members = True
 intents.message_content = True
 
@@ -547,37 +499,18 @@ async def on_message(message: discord.Message):
 
 
 # ==========================================================
-#                   VOICE CHANNEL LOGIC
+#                   BOT LIFECYCLE & COMMANDS
 # ==========================================================
-
-def is_trigger_channel(channel: discord.VoiceChannel) -> bool:
-    """Determine whether a voice channel is a 'Join to Create' generator channel."""
-    if not isinstance(channel, discord.VoiceChannel):
-        return False
-    if channel.id in TRIGGER_CHANNEL_IDS:
-        return True
-    if channel.name.lower() in TRIGGER_CHANNEL_NAMES:
-        return True
-    return False
-
-
-def get_user_lock(user_id: int) -> asyncio.Lock:
-    """Retrieve or create an asyncio lock for a user to prevent creation race conditions."""
-    if user_id not in user_locks:
-        user_locks[user_id] = asyncio.Lock()
-    return user_locks[user_id]
-
 
 @bot.event
 async def on_ready():
     """Lifecycle event when bot successfully connects to Discord Gateway."""
     logger.info(f"Bot logged in as {bot.user} (ID: {bot.user.id})")
     logger.info(f"Connected to {len(bot.guilds)} guild(s)")
-    if TRIGGER_CHANNEL_IDS:
-        logger.info(f"Trigger Channel IDs configured: {list(TRIGGER_CHANNEL_IDS)}")
-    logger.info(f"Trigger Channel Names matching: {TRIGGER_CHANNEL_NAMES}")
-    logger.info(f"Whitelist Review Channel: {WHITELIST_REVIEW_CHANNEL_ID}")
-    logger.info(f"Console Bridge Channel: {CONSOLE_CHANNEL_ID}")
+    if WHITELIST_REVIEW_CHANNEL_ID:
+        logger.info(f"Whitelist Review Channel: {WHITELIST_REVIEW_CHANNEL_ID}")
+    if CONSOLE_CHANNEL_ID:
+        logger.info(f"Console Bridge Channel: {CONSOLE_CHANNEL_ID}")
 
     # Register persistent view so Whitelist button keeps working across restarts
     bot.add_view(WhitelistLaunchView())
@@ -594,153 +527,11 @@ async def on_ready():
 
     # Set activity presence
     activity = discord.Activity(
-        type=discord.ActivityType.listening,
-        name="Join to Create & Whitelist"
+        type=discord.ActivityType.watching,
+        name=SERVER_NAME
     )
     await bot.change_presence(status=discord.Status.online, activity=activity)
 
-    # Reconcile persisted temporary channels and clean up orphaned ones
-    async with state_lock:
-        stale_channels = set()
-        for ch_id in list(temp_channels):
-            channel = bot.get_channel(ch_id)
-            if channel is None:
-                try:
-                    channel = await bot.fetch_channel(ch_id)
-                except (discord.NotFound, discord.Forbidden):
-                    channel = None
-
-            if channel is None:
-                stale_channels.add(ch_id)
-            elif isinstance(channel, discord.VoiceChannel):
-                if len(channel.members) == 0:
-                    try:
-                        logger.info(f"Reconciliation: Deleting empty orphaned channel '{channel.name}' ({channel.id})")
-                        await channel.delete(reason="Reconciliation: Empty temporary channel on startup")
-                    except Exception as e:
-                        logger.warning(f"Could not delete channel {ch_id}: {e}")
-                    stale_channels.add(ch_id)
-                else:
-                    logger.info(f"Reconciliation: Keeping active temporary channel '{channel.name}' ({channel.id}) with {len(channel.members)} member(s)")
-
-        for ch_id in stale_channels:
-            temp_channels.discard(ch_id)
-        save_temp_channels()
-
-
-@bot.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    """Handle member voice updates (join, leave, switch)."""
-    if member.bot:
-        return
-
-    # Scenario 1: Member left or moved away from a temporary channel
-    if before.channel is not None and before.channel != after.channel:
-        if before.channel.id in temp_channels:
-            if len(before.channel.members) == 0:
-                async with state_lock:
-                    temp_channels.discard(before.channel.id)
-                    save_temp_channels()
-                try:
-                    logger.info(f"Cleaning up empty temporary channel '{before.channel.name}' (ID: {before.channel.id})")
-                    await before.channel.delete(reason="Temporary voice channel is empty")
-                except discord.NotFound:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Failed to delete channel '{before.channel.name}': {e}")
-
-    # Scenario 2: Member joined a trigger ("Join to Create") channel
-    if after.channel is not None and before.channel != after.channel:
-        if is_trigger_channel(after.channel):
-            asyncio.create_task(handle_channel_creation(member, after.channel))
-
-
-async def handle_channel_creation(member: discord.Member, trigger_channel: discord.VoiceChannel):
-    """Create a temporary channel for the user, grant permissions, and move the member."""
-    lock = get_user_lock(member.id)
-    if lock.locked():
-        return
-
-    async with lock:
-        guild = member.guild
-        category = trigger_channel.category
-
-        clean_name = member.display_name.strip()
-        channel_name = CHANNEL_NAME_TEMPLATE.format(
-            username=clean_name,
-            name=clean_name,
-            user=member.name
-        )
-        if len(channel_name) > 100:
-            channel_name = channel_name[:97] + "..."
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                connect=True,
-                speak=True,
-                view_channel=True
-            ),
-            member: discord.PermissionOverwrite(
-                manage_channels=True,
-                connect=True,
-                speak=True,
-                view_channel=True,
-                mute_members=False,
-                deafen_members=False,
-                move_members=False
-            ),
-            guild.me: discord.PermissionOverwrite(
-                manage_channels=True,
-                move_members=True,
-                connect=True,
-                view_channel=True
-            )
-        }
-
-        if category:
-            for target, overwrite in category.overwrites.items():
-                if target not in overwrites:
-                    overwrites[target] = overwrite
-
-        try:
-            new_channel = await guild.create_voice_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                bitrate=min(trigger_channel.bitrate, guild.bitrate_limit),
-                user_limit=trigger_channel.user_limit,
-                reason=f"Temporary channel created for {member.display_name} ({member.id})"
-            )
-            logger.info(f"Created temporary voice channel '{new_channel.name}' (ID: {new_channel.id}) for {member.display_name}")
-
-            async with state_lock:
-                temp_channels.add(new_channel.id)
-                save_temp_channels()
-
-            if member.voice is None or member.voice.channel != trigger_channel:
-                logger.info(f"User {member.display_name} left or switched before moving. Checking channel status...")
-                if len(new_channel.members) == 0:
-                    async with state_lock:
-                        temp_channels.discard(new_channel.id)
-                        save_temp_channels()
-                    await new_channel.delete(reason="User disconnected before moving into created channel")
-                    logger.info(f"Cleaned up empty channel '{new_channel.name}' (ID: {new_channel.id})")
-                return
-
-            await member.move_to(new_channel, reason="Moved creator into newly created temporary channel")
-            logger.info(f"Successfully moved {member.display_name} to '{new_channel.name}'")
-
-        except discord.Forbidden as e:
-            logger.error(f"Permission error creating or managing channel: {e}")
-        except discord.HTTPException as e:
-            logger.error(f"Discord HTTP exception during channel creation: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error in handle_channel_creation: {e}", exc_info=True)
-
-
-# ==========================================================
-#                   SLASH / PREFIX COMMANDS
-# ==========================================================
 
 @bot.tree.command(name="whitelist-paneli-kur", description="Minecraft Whitelist başvuru panelini bu kanala kurar.")
 @discord.app_commands.default_permissions(administrator=True)
@@ -771,5 +562,5 @@ async def prefix_setup_whitelist_panel(ctx: commands.Context):
 
 
 if __name__ == "__main__":
-    logger.info("Starting Discord Auto Voice Channel, Whitelist & Console Bot...")
+    logger.info("Starting Minecraft & Discord Bridge Bot...")
     bot.run(TOKEN)

@@ -5,7 +5,7 @@
 [![Minecraft Fabric](https://img.shields.io/badge/Minecraft-Fabric%2026.2-brightgreen.svg)](https://fabricmc.net/)
 [![Java](https://img.shields.io/badge/Java-25-orange.svg)](https://adoptium.net/)
 
-A production-ready integration between a Minecraft Fabric server and Discord. Features automated Mojang API whitelist verification, in-game real-time synchronization with zero server downtime, a bidirectional live console bridge, and temporary voice channel management.
+A production-ready integration between a Minecraft Fabric server and Discord. Features automated Mojang API whitelist verification, in-game real-time synchronization with zero server downtime, and a bidirectional live console bridge.
 
 ---
 
@@ -21,11 +21,6 @@ A production-ready integration between a Minecraft Fabric server and Discord. Fe
 - **Log4j 2 Streaming Appender**: Captures all server logs, player chat, command outputs, and exceptions in real time directly from the Minecraft server engine.
 - **Rate-Limited Discord Feed**: Batches console output into clean, dark-themed code blocks sent to a dedicated `#console` channel.
 - **Remote Console Execution**: Server administrators can type raw console commands directly into `#console` (e.g. `say Server restart in 5m`, `whitelist list`, `op PlayerName`) to execute them in-game without logging into the VPS.
-
-### 3. 🎙️ "Join to Create" Dynamic Voice Channels
-- Automatically creates user-owned temporary voice channels when a member enters a designated generator channel.
-- Delegates native Discord permissions (`Manage Channels`, `User Limit`) to the creator.
-- Cleans up empty channels automatically upon exit to prevent server clutter.
 
 ---
 
